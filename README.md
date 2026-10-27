@@ -3,8 +3,6 @@
 CLI-клиент для API [retrotube.net](https://retrotube.net) (спецификация: `retrotube_openapi.json`).
 
 **Зависимостей нет** — только стандартная библиотека Python 3.8+.
-`requirements.txt` присутствует формально (пустой, с пояснением) — для привычного
-`pip install -r requirements.txt`; он ничего не устанавливает.
 
 ## Запуск
 
