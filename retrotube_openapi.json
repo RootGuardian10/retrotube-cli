@@ -1,0 +1,6475 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RetroTube API",
+    "version": "1.0.0",
+    "summary": "REST API видеохостинга RetroTube (retrotube.net).",
+    "description": "Спецификация собрана автоматически 20 октября 2026 года путём обхода сайта через Firecrawl, статического анализа клиентского JavaScript и проверки маршрутов живыми HTTP-запросами; 23 октября 2026 года все защищённые маршруты проверены под тестовым аккаунтом, включая полный цикл загрузки видео.\n\n## Идентификаторы\n\nВ API сосуществуют три вида идентификаторов, и их нельзя путать:\n\n| Вид | Формат | Где |\n|---|---|---|\n| ObjectId | 24 hex (`6ad40af79010a953622cfa46`) | `ref`, `commentId`, `postId`, `playlistId`, `channelId`, а также `/videos/{id}/upload`, `/videos/{id}/status`, `/videos/{id}/publish` |\n| URL-ид видео | ~11 симв. base64url (`JS8iyxhxktlY-`) | `/videos/{videoId}`, `/videos/{videoId}/thumbnail`, `/playlists/{p}/videos/{videoId}` |\n| Username | `[a-zA-Z0-9]{3,16}` (`klodska`) | `/users/{username}` |\n\n> ⚠️ В `ref` передаётся **ObjectId**, а не URL-ид видео. `ref=JS8iyxhxktlY-` даёт `400 ID_INVALID`.\n\n## Аутентификация\n\nJWT в cookie: `accessToken` (5 секунд) и `refreshToken` (1 год). Сервер сам продлевает access-токен на любом запросе с валидным refresh-токеном. `POST /auth/login` при успехе возвращает `text/html`.\n\n## Ограничение частоты запросов\n\nДва независимых счётчика: глобальный (1000 запросов / ~15 минут по IP) и **по маршруту** (10–15 запросов / короткое окно; у `/auth/login` — 15). При превышении — `429` с заголовками `X-RateLimit-*` и `Retry-After`.\n\n## Пагинация\n\n`limit` — не больше **25** (`26+` → `400 LIMIT_INVALID`).\n\n## Маркировка достоверности\n\nУ каждой операции есть расширение `x-verified`:\n\n- `live` — маршрут и его поведение подтверждены живым запросом к серверу (включая полный цикл загрузки видео под тестовым аккаунтом);\n- `derived` — маршрут подтверждён только наличием (например, виден в `Allow` или требует прав, которых у тестового аккаунта нет).\n\nПолный человекочитаемый справочник — в `api_documentation.md`.",
+    "contact": {
+      "name": "RetroTube",
+      "url": "https://retrotube.net/contact"
+    },
+    "license": {
+      "name": "Только для документирования",
+      "identifier": "LicenseRef-Internal"
+    },
+    "x-generated-by": "tools/generate_openapi.py",
+    "x-source-of-truth": [
+      "api_documentation.md",
+      "artifacts/i18n/en-responses.json",
+      "https://retrotube.net/locales/en/responses.json"
+    ]
+  },
+  "servers": [
+    {
+      "url": "https://retrotube.net/api/v1",
+      "description": "Production"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Регистрация, вход, сессия."
+    },
+    {
+      "name": "Videos",
+      "description": "Каталог, загрузка, редактирование видео."
+    },
+    {
+      "name": "Users",
+      "description": "Профили, плейлисты, уведомления, статистика."
+    },
+    {
+      "name": "Comments",
+      "description": "Комментарии, ответы, закрепление."
+    },
+    {
+      "name": "Engagement",
+      "description": "Лайки, дизлайки, подписки, уведомления канала."
+    },
+    {
+      "name": "Playlists",
+      "description": "Плейлисты и их состав."
+    },
+    {
+      "name": "Community",
+      "description": "Посты сообщества и опросы."
+    },
+    {
+      "name": "Live",
+      "description": "Live-стримы и модерация. Realtime-часть — в `x-socketio`."
+    },
+    {
+      "name": "Reports",
+      "description": "Жалобы на контент."
+    },
+    {
+      "name": "Search",
+      "description": "Поиск по видео и пользователям."
+    }
+  ],
+  "security": [],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Вход в аккаунт",
+        "description": "Аутентифицирует пользователя и выставляет три cookie:\n\n- `accessToken` — JWT с данными пользователя, **5 секунд** (`Max-Age=5`);\n- `refreshToken` — JWT только с `sessionId`, 1 год;\n- `i18next` — язык интерфейса, 1 год.\n\nСервер сам продлевает `accessToken` на любом запросе с валидным `refreshToken`, так что вручную обновлять токен не нужно.\n\nТело — `application/x-www-form-urlencoded`, а не JSON.\n\n⚠️ При **успехе** ответ `200 text/html` (обычный form-POST с редиректом на `/`), а при **ошибке** — `application/json` с `code`/`errors`.\n\nОшибки: `USERNAME_REQUIRED`, `USERNAME_INVALID`, `PASSWORD_REQUIRED`, `WRONG_PASSWORD`, `RESOURCE_NOT_FOUND` (пользователя нет), `TOO_MANY_REQUESTS`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Успешный вход — cookie `accessToken`/`refreshToken` установлены. Тело — HTML-страница, а не JSON."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9]{3,16}$",
+                    "description": "Логин: 3–16 символов, латиница и цифры."
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 32,
+                    "pattern": "^(?=.*\\d)(?=.*[a-z])(?=.*[A-Z]).{8,32}$",
+                    "description": "8–32 символа, минимум одна цифра, одна строчная и одна заглавная буква."
+                  }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/signup": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Регистрация",
+        "description": "Создаёт аккаунт. Тело — `application/x-www-form-urlencoded`.\n\nПосле регистрации на e-mail приходит ссылка подтверждения (действует 24 часа); коды `EMAIL_NOT_VERIFIED` / `TOKEN_INVALID` / `EMAIL_ALREADY_VERIFIED` относятся к этому этапу.",
+        "x-verified": "live",
+        "responses": {
+          "201": {
+            "description": "Аккаунт создан."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "signup",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9]{3,16}$"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 32,
+                    "pattern": "^(?=.*\\d)(?=.*[a-z])(?=.*[A-Z]).{8,32}$"
+                  },
+                  "retype-password": {
+                    "type": "string",
+                    "description": "Повтор пароля (только форма сайта)."
+                  },
+                  "terms": {
+                    "type": "boolean",
+                    "description": "Подтверждение возраста ≥13 лет и согласия с Terms/Privacy."
+                  },
+                  "g-recaptcha-response": {
+                    "type": "string",
+                    "description": "reCAPTCHA-токен, если требуется."
+                  }
+                },
+                "required": [
+                  "username",
+                  "email",
+                  "password",
+                  "terms"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Текущая сессия",
+        "description": "Возвращает данные авторизованного пользователя.\n\nОтвет **обёрнут в `user`**: `{\"user\": {...}}`. Иногда внутри дополнительно присутствуют поля access-JWT (`type`, `iat`, `exp`) — набор нестабилен.\n\nСервер сам продлевает `accessToken` (5 с) на любом запросе с валидным `refreshToken`, поэтому `200` приходит и после истечения access-токена.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Данные пользователя.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "operationId": "getSession",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Выход из аккаунта",
+        "description": "Удаляет cookie `accessToken`/`refreshToken`. Последующий `GET /auth/session` → `401`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Выход выполнен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "operationId": "logout",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/videos": {
+      "get": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Каталог видео",
+        "description": "Список видео с фильтрами. **Параметры `page` и `limit` обязательны** — без них сервер отвечает `400 PAGE_INVALID`.\n\nВозвращает пагинированный список `{items, totalPages, isLastPage}`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список видео.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoList"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "_id": "6ad623ec010b26fd3747202d",
+                      "title": "GTA 2 Opening Intro",
+                      "description": "",
+                      "url": "ocCA8ZU2Zs9_T",
+                      "status": "published",
+                      "deletion": "none",
+                      "thumbnailPath": "1792418911347abd7d747-ae3f-4e43-b1b1-0bf65abcb4c3.jpeg",
+                      "agThumbnails": [
+                        "ag/17924188222634dfc5d2f-8d72-450c-9082-3cca24f3e046.jpg"
+                      ],
+                      "uploadedBy": {
+                        "_id": "69d0fed37ff408b44281176d",
+                        "username": "sovietman",
+                        "avatarPath": "1775304512293f2f45031-291c-4c71-99de-8a61f949c35b.jpeg",
+                        "badgePath": null,
+                        "subscribers": 27,
+                        "displayName": "sovietman"
+                      },
+                      "length": 110.9768,
+                      "views": 15,
+                      "likes": 2,
+                      "dislikes": 0,
+                      "isSensitive": false,
+                      "category": "Gaming",
+                      "createdAt": "2026-10-19T14:06:36.956Z",
+                      "filePath": "17924188069280419435d-3bfa-466e-8071-e6987cad4b80.mp4",
+                      "tags": "#gta #intro #gta2",
+                      "visibility": "public",
+                      "formattedLength": "1:50"
+                    }
+                  ],
+                  "totalPages": 218,
+                  "isLastPage": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "listVideos",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/VideoSort"
+          },
+          {
+            "$ref": "#/components/parameters/TimeRange"
+          },
+          {
+            "$ref": "#/components/parameters/RestrictionSort"
+          },
+          {
+            "$ref": "#/components/parameters/Category"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Создать черновик видео",
+        "description": "Первый шаг загрузки: создаёт черновик и резервирует URL-ид. Затем файл загружается в `POST /videos/{videoId}/upload`.\n\nОтвет: `{_id, url, title, uploadedBy}`, где `uploadedBy` — **строка ObjectId**.\n\nОграничение: не больше 10 видео за 24 часа (`TOO_MANY_VIDEOS`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Черновик создан.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoDraft"
+                },
+                "example": {
+                  "_id": "6adba1c7d747e44e21c850a1",
+                  "url": "ptWm2ZxPpvXLY",
+                  "title": "my video.mp4",
+                  "uploadedBy": "6ace78589010a95362202e45"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "createVideoDraft",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 50,
+                    "description": "Рабочее название черновика (3–50 символов)."
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              },
+              "example": {
+                "title": "my video.mp4"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/videos/categories": {
+      "get": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Список категорий",
+        "description": "Фиксированный набор из 12 категорий, заданный на сервере.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Категории.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Categories"
+                },
+                "example": {
+                  "categories": [
+                    "Gaming"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listVideoCategories"
+      }
+    },
+    "/videos/featured": {
+      "get": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Рекомендуемые видео",
+        "description": "Подборка featured-видео. Возвращает **голый массив**, без обёртки пагинации.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Массив видео.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Video"
+                  }
+                },
+                "example": [
+                  {
+                    "_id": "6ad3ca929010a953622c6e23",
+                    "title": "играю в игру джо метри даша",
+                    "description": "другой ракурс: https://retrotube.net/watch?v=RbEta20BYqc2d",
+                    "url": "HIY38chbm4g8i",
+                    "thumbnailPath": "ag/179226487551777b41baf-de67-41b9-835c-5b422976252f.jpg",
+                    "agThumbnails": [
+                      "ag/17922648752865842025a-4896-462e-a989-eb32f7c1ec3e.jpg"
+                    ],
+                    "uploadedBy": {
+                      "_id": "699e0c30bf5147ee91ac842f",
+                      "username": "exby",
+                      "avatarPath": "1788363927464752b0d1b-4b62-4329-96e3-727eb47b6259.jpeg",
+                      "badgePath": null,
+                      "subscribers": 36,
+                      "displayName": "exby"
+                    },
+                    "length": 91.6,
+                    "views": 56,
+                    "likes": 14,
+                    "dislikes": 0,
+                    "isSensitive": false,
+                    "category": null,
+                    "createdAt": "2026-10-17T19:20:50.254Z",
+                    "filePath": "17922648595408121c18c-3b8f-48d7-a741-8e8d308b459e.mp4",
+                    "tags": "",
+                    "visibility": "public"
+                  }
+                ]
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listFeaturedVideos"
+      }
+    },
+    "/videos/{videoId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/VideoUrlId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Видео по URL-иду",
+        "description": "Одно видео. `:videoId` — **URL-ид** вида `JS8iyxhxktlY-` (из ссылки `/watch?v=…`), а не ObjectId.\n\nОтвет содержит подмножество полей: `status`, `deletion` и `formattedLength` в детальном ответе не возвращаются.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Видео.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Video"
+                },
+                "example": {
+                  "_id": "6ad40af79010a953622cfa46",
+                  "url": "JS8iyxhxktlY-",
+                  "uploadedBy": {
+                    "_id": "6aa83e37b232946e10d95630",
+                    "username": "RedArt",
+                    "avatarPath": "1791434459302c1aa7852-cd04-4e79-95df-36c086ecf0ea.jpeg",
+                    "badgePath": null,
+                    "subscribers": 36,
+                    "displayName": "RedArt"
+                  },
+                  "title": "Укладываю Ену спать",
+                  "description": "Бля почему бы и нет",
+                  "tags": "",
+                  "visibility": "public",
+                  "category": "Animals",
+                  "filePath": "1792281342750b4908b57-e8d2-4ac2-ae49-c3fdcb4694f8.mp4",
+                  "thumbnailPath": "ag/1792281349701cad079da-67b2-470d-b63a-97d7bbe1ff48.jpg",
+                  "agThumbnails": [
+                    "ag/1792281349701cad079da-67b2-470d-b63a-97d7bbe1ff48.jpg"
+                  ],
+                  "length": 24.171995,
+                  "views": 29,
+                  "likes": 4,
+                  "dislikes": 0,
+                  "isSensitive": false,
+                  "createdAt": "2026-10-17T23:55:35.244Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getVideo"
+      },
+      "patch": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Редактировать видео",
+        "description": "Изменяет метаданные видео. `:videoId` — URL-ид. Тело — **JSON**.\n\nПроверено: все перечисленные поля реально сохраняются и читаются обратно.\n\nОшибки: `TITLE_INVALID` (3–50 символов), `DESCRIPTION_TOO_LONG`, `TAGS_TOO_LONG`, `CATEGORY_INVALID`, `VISIBILITY_REQUIRED`, `VISIBILITY_INVALID`, `NO_CHANGES_MADE`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обновлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "updateVideo",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 50
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Описание видео."
+                  },
+                  "tags": {
+                    "type": "string",
+                    "description": "Теги одной строкой через запятую."
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "Gaming",
+                      "Music",
+                      "Art",
+                      "Comedy",
+                      "Entertainment",
+                      "News",
+                      "Sports",
+                      "Technology",
+                      "Travel",
+                      "Tutorial",
+                      "Animals",
+                      "Science"
+                    ]
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "unlisted",
+                      "private"
+                    ]
+                  },
+                  "isSensitive": {
+                    "type": "boolean",
+                    "description": "Чувствительный контент."
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "delete": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Удалить видео",
+        "description": "Удаляет видео. `:videoId` — URL-ид. После удаления `GET /videos/{url}` → `404`.\n\n⚠️ Счётчик `videos` в `GET /users/{u}/stats` при удалении не уменьшается.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Удалено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "deleteVideo",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/videos/{videoId}/upload": {
+      "parameters": [
+        {
+          "name": "videoId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "**ObjectId** черновика (из ответа `POST /videos`), а не URL-ид.",
+          "example": "6ad623ec010b26fd3747202d"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Загрузить файл видео",
+        "description": "Загружает видеофайл в созданный черновик. Тело — `multipart/form-data`, единственное обязательное поле — **`video`** (не `file`!).\n\nОтвет `{\"success\": true}`. Проверено на `video/webm` 8.9 МБ.\n\nОграничения: файл ≤ 200 МБ, не более 10 видео за 24 часа. Ошибки: `VIDEO_FILE_REQUIRED`, `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `VIDEO_ALREADY_UPLOADED`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Файл принят.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "uploadVideoFile",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "video": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Видеофайл."
+                  }
+                },
+                "required": [
+                  "video"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/videos/{videoId}/status": {
+      "parameters": [
+        {
+          "name": "videoId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "**ObjectId** видео (из ответа `POST /videos`), а не URL-ид.",
+          "example": "6adba1c7d747e44e21c850a1"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Статус обработки видео",
+        "description": "Опрос состояния перекодирования после загрузки. `:videoId` — **ObjectId**.\n\nПроверено: `encoding` (с `progress` 57) → `encoding_finished` (`progress` 100).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Текущий статус.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoStatus"
+                },
+                "example": {
+                  "success": true,
+                  "status": "encoding",
+                  "progress": 57
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getVideoStatus",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/videos/{videoId}/publish": {
+      "parameters": [
+        {
+          "name": "videoId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "**ObjectId** видео, а не URL-ид.",
+          "example": "6adba1c7d747e44e21c850a1"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Опубликовать видео",
+        "description": "Публикует видео после успешного кодирования (`encoding_finished`). `:videoId` — **ObjectId**. Ответ `{\"success\": true}`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Опубликовано.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "publishVideo",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/videos/{videoId}/thumbnail": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/VideoUrlId"
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Загрузить обложку видео",
+        "description": "Загружает собственную обложку. `:videoId` — URL-ид. Тело — `multipart/form-data`, поле **`thumbnail`** (`image/jpeg|png`).\n\nОтвет: `{\"success\": true, \"thumbnailPath\": \"…\"}`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обложка загружена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThumbnailUploaded"
+                },
+                "example": {
+                  "success": true,
+                  "thumbnailPath": "1792…-….png"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "uploadVideoThumbnail",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "thumbnail": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Файл обложки."
+                  }
+                },
+                "required": [
+                  "thumbnail"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/videos/{videoId}/thumbnail/{index}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/VideoUrlId"
+        },
+        {
+          "name": "index",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Индекс авто-обложки в массиве `agThumbnails` (с 0).",
+          "example": 0
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Выбрать авто-обложку",
+        "description": "Выбирает одну из автоматически сгенерированных обложек (`agThumbnails`). `:videoId` — URL-ид. Ответ `{\"success\": true}`.\n\nОшибки: `AG_THUMBNAILS_NOT_AVAILABLE`, `AG_INDEX_INVALID`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обложка выбрана.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "selectAutoThumbnail",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/videos/{videoId}/comments": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/VideoUrlId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Videos",
+          "Comments"
+        ],
+        "summary": "Комментарии к видео",
+        "description": "Алиас для `GET /comments?refType=Video&ref=<ObjectId>`. Здесь `ref` подставляется сервером.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список комментариев.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listVideoComments",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/CommentSort"
+          }
+        ]
+      }
+    },
+    "/users": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Список пользователей",
+        "description": "**Только для админа/модератора.** Обычный авторизованный пользователь получает `403 FORBIDDEN` (проверено). Параметры `page` и `limit` обязательны.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список пользователей.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSearchResultList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listUsers",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      }
+    },
+    "/users/{username}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Профиль пользователя",
+        "description": "Публичный профиль. `:username` — логин, а не ObjectId (с ObjectId приходит `400 USERNAME_INVALID`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Профиль.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                },
+                "example": {
+                  "_id": "69910494c8807d937055b73f",
+                  "username": "klodska",
+                  "displayName": "klodska",
+                  "avatarPath": "178776199248424b4d02a-b6b1-49e9-8556-6f95ff69e042.jpeg",
+                  "bannerPath": "1787763307014193ab335-052c-459e-ab8e-bdb45c8db299.png",
+                  "backgroundPath": "17924194908006c017a28-1624-4166-b135-6465303bbed4.jpeg",
+                  "subscribers": 35,
+                  "bio": "Сайт \r\nhttps:&#x2F;&#x2F;klodska.qzz.io&#x2F;\r\n\r\nСайт KlodskaTeam \r\nhttps:&#x2F;&#x2F;kteam.qzz.io&#x2F;\r\n\r\nIt…",
+                  "createdAt": "2026-02-14T23:26:12.566Z",
+                  "channel": {
+                    "profileTheme": {
+                      "custom": null,
+                      "presetId": "terminal"
+                    },
+                    "featuredVideo": {
+                      "_id": "6a31ee27fcfd3c88755af160",
+                      "title": "Как получить галочку/нотку* (НЕ КЛИКБЕЙТ)",
+                      "description": "* - ну почти\n\nсайт https://rth.klodska.qzz.io/",
+                      "url": "S7Uu6Av5PaLU6",
+                      "thumbnailPath": "178165721235232578b48-0a7b-4f20-a907-62752364af19.jpeg",
+                      "agThumbnails": [
+                        "ag/1781657204573a1879cd3-3f64-4c63-bc16-f6bd6174fd36.jpg"
+                      ],
+                      "uploadedBy": {
+                        "_id": "69910494c8807d937055b73f",
+                        "username": "klodska",
+                        "avatarPath": "178776199248424b4d02a-b6b1-49e9-8556-6f95ff69e042.jpeg",
+                        "subscribers": 35,
+                        "displayName": "klodska"
+                      },
+                      "length": 374.101,
+                      "views": 79,
+                      "likes": 8,
+                      "dislikes": 0,
+                      "isSensitive": false,
+                      "isFeatured": false,
+                      "category": null,
+                      "createdAt": "2026-06-17T00:45:27.882Z",
+                      "filePath": "1781657141709f6e7c2bb-3d81-4c37-a57b-f94a6160ff80.mp4",
+                      "tags": "Галочка",
+                      "visibility": "public"
+                    },
+                    "featuredChannels": {
+                      "groups": [
+                        {
+                          "name": "Тестовый канал",
+                          "channels": [
+                            {
+                              "_id": "6ab93d711b227e05280ba979",
+                              "username": "fanatmkruga",
+                              "avatarPath": "179070442320503a451b4-30e1-4de8-a378-f1ba547721a8.jpeg",
+                              "subscribers": 2,
+                              "displayName": "ZRBank"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getUser"
+      },
+      "patch": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Изменить профиль",
+        "description": "Изменяет профиль текущего пользователя. `:username` должен совпадать с владельцем сессии.\n\nПроверено:\n- `bio` сохраняется; **`bio: \"\"` игнорируется** — очистить bio через API нельзя;\n- смена `displayName` может вернуть `403 DISPLAY_NAME_CHANGE_NOT_ALLOWED` (кулдаун);\n- запрос без изменений → **`200`** с `code: NO_CHANGES_MADE` (не 400).\n\nОшибки: `DISPLAY_NAME_REQUIRED`, `DISPLAY_NAME_INVALID`, `DISPLAY_NAME_INVALID_LENGTH`, `DISPLAY_NAME_CHANGE_NOT_ALLOWED`, `BIO_REQUIRED`, `BIO_TOO_LONG`, `EMAIL_INVALID`, `EMAIL_TAKEN`, `PROFILE_THEME_PRESET_INVALID`, `PROFILE_THEME_CUSTOM_INVALID`, `PROFILE_THEME_PREMIUM_REQUIRED`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обновлено (или `NO_CHANGES_MADE` с кодом 200).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "updateUser",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "bio": {
+                    "type": "string",
+                    "description": "Пустая строка игнорируется (очистить нельзя)."
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "currentPassword": {
+                    "type": "string",
+                    "description": "Текущий пароль (при смене пароля)."
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "description": "Новый пароль."
+                  },
+                  "confirmPassword": {
+                    "type": "string",
+                    "description": "Подтверждение нового пароля."
+                  },
+                  "profileTheme": {
+                    "type": "object",
+                    "properties": {
+                      "presetId": {
+                        "type": "string",
+                        "enum": [
+                          "halloween",
+                          "terminal",
+                          "golden",
+                          "lava",
+                          "mariana_trench",
+                          "bluedrop",
+                          "midnight"
+                        ]
+                      },
+                      "custom": {
+                        "type": "object",
+                        "properties": {
+                          "color": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "delete": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Удалить аккаунт",
+        "description": "Маршрут существует (`Allow: DELETE, GET, HEAD, PATCH`), но **не проверялся** во избежание удаления тестового аккаунта.",
+        "x-verified": "derived",
+        "responses": {
+          "200": {
+            "description": "Аккаунт удалён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "deleteUser",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/users/{username}/videos": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Видео пользователя",
+        "description": "Публичный список видео пользователя.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список видео.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listUserVideos",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Hidden"
+          }
+        ]
+      }
+    },
+    "/users/{username}/playlists": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Плейлисты пользователя",
+        "description": "Публичный список плейлистов пользователя.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список плейлистов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listUserPlaylists",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Hidden"
+          }
+        ]
+      }
+    },
+    "/users/{username}/comments": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Комментарии пользователя",
+        "description": "**Только для админа/модератора**: даже на свой профиль обычный пользователь получает `403 FORBIDDEN` (проверено).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список комментариев.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listUserComments",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      }
+    },
+    "/users/{username}/subscriptions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Подписки пользователя",
+        "description": "**Только для админа/модератора** (`403 FORBIDDEN` для обычного пользователя). Требует `page` и `limit` (иначе `400 PAGE_INVALID`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список подписок.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSearchResultList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listUserSubscriptions",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      }
+    },
+    "/users/{username}/subscriptions/videos": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Видео из подписок",
+        "description": "Лента видео из каналов, на которые подписан пользователь. Требует авторизации. Ответ содержит дополнительное поле `success`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список видео.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Video"
+                      }
+                    },
+                    "totalPages": {
+                      "type": "integer"
+                    },
+                    "isLastPage": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listSubscriptionFeed",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      }
+    },
+    "/users/{username}/notifications": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Уведомления",
+        "description": "Список уведомлений пользователя. Требует авторизации.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список уведомлений.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listNotifications",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageOptional"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Пометить уведомления прочитанными",
+        "description": "Вызывается сразу после загрузки ленты. Требует авторизации.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Готово.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "markNotificationsRead",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "read",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean",
+              "const": true
+            },
+            "description": "Флаг: пометить как прочитанные.",
+            "example": true
+          }
+        ]
+      }
+    },
+    "/users/{username}/notifications/unread": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Есть ли непрочитанные уведомления",
+        "description": "Возвращает **голый boolean** (`true` / `false`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Флаг непрочитанных.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                },
+                "example": true
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getUnreadNotifications",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/users/{username}/stats": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Статистика канала",
+        "description": "Сводная статистика **своего** канала. На чужой профиль — `403 FORBIDDEN` (проверено).\n\n⚠️ Счётчик `videos` не уменьшается при удалении видео — это денормализованное значение, а не размер текущей выборки.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Статистика.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "videos": {
+                      "type": "integer"
+                    },
+                    "views": {
+                      "type": "integer"
+                    },
+                    "likes": {
+                      "type": "integer"
+                    },
+                    "dislikes": {
+                      "type": "integer"
+                    },
+                    "comments": {
+                      "type": "integer"
+                    },
+                    "subscribers": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "videos",
+                    "views",
+                    "likes",
+                    "dislikes",
+                    "comments",
+                    "subscribers"
+                  ]
+                },
+                "example": {
+                  "videos": 2,
+                  "views": 0,
+                  "likes": 0,
+                  "dislikes": 0,
+                  "comments": 0,
+                  "subscribers": 1
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getUserStats",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/comments": {
+      "get": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Список комментариев",
+        "description": "Комментарии к произвольному ресурсу. `ref` — **ObjectId** ресурса (не URL-ид видео!), `refType` — `Video` или `CommunityPost`.\n\n`page` и `limit` обязательны.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список комментариев.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentList"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "_id": "6ad511fb010b26fd37450452",
+                      "user": {
+                        "_id": "69910494c8807d937055b73f",
+                        "username": "klodska",
+                        "avatarPath": "178776199248424b4d02a-b6b1-49e9-8556-6f95ff69e042.jpeg",
+                        "badgePath": null,
+                        "subscribers": 35,
+                        "displayName": "klodska"
+                      },
+                      "ref": "6ad40af79010a953622cfa46",
+                      "refType": "Video",
+                      "text": "спокойной ночи!!",
+                      "attachments": [],
+                      "likes": 1,
+                      "dislikes": 0,
+                      "replies": 0,
+                      "parent": null,
+                      "isPinned": false,
+                      "isEdited": false,
+                      "createdAt": "2026-10-18T18:37:47.550Z",
+                      "updatedAt": "2026-10-18T18:49:49.258Z",
+                      "__v": 0
+                    }
+                  ],
+                  "totalPages": 3,
+                  "isLastPage": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listComments",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Ref"
+          },
+          {
+            "$ref": "#/components/parameters/RefType"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/CommentSort"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Создать комментарий",
+        "description": "Тело — `multipart/form-data`: `text` (обязательно) и `media` (файл, опционально).\n\n⚠️ Ответ — **`200 {\"success\": true}` без `_id`** созданного комментария. Чтобы узнать id, перечитайте `GET /comments?ref=…&refType=…&sort=newest`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Комментарий создан (без id).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "createComment",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Ref"
+          },
+          {
+            "$ref": "#/components/parameters/RefType"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "description": "Текст комментария. Ошибки: `TEXT_REQUIRED`, `TEXT_TOO_LONG`."
+                  },
+                  "media": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Вложение (опц.)."
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/comments/pinned": {
+      "get": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Закреплённые комментарии",
+        "description": "Возвращает **голый массив** (пустой `[]`, если закреплённых нет).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Массив комментариев.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Comment"
+                  }
+                },
+                "example": []
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listPinnedComments",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Ref"
+          },
+          {
+            "$ref": "#/components/parameters/RefType"
+          }
+        ]
+      }
+    },
+    "/comments/{commentId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/CommentId"
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Редактировать комментарий",
+        "description": "После успеха у комментария выставляется `isEdited: true`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обновлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "updateComment",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 10000
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              },
+              "example": {
+                "text": "новый текст"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "delete": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Удалить комментарий",
+        "description": "Удаляет комментарий (или ответ на него).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Удалено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "deleteComment",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/comments/{commentId}/replies": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/CommentId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Ответы на комментарий",
+        "description": "Список ответов. Параметр `page` обязателен.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список ответов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listCommentReplies",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/LimitOptional"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Ответить на комментарий",
+        "description": "Тело — `multipart/form-data`: `text` (обязательно), `media` (опц.).\n\nОтвет — `200 {\"success\": true}` без `_id` (как и у обычного комментария).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Ответ создан (без id).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "createCommentReply",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "media": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/comments/{commentId}/pin": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/CommentId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Закрепить комментарий",
+        "description": "Закрепляет комментарий. Ответы закреплять нельзя — `400 CANT_PIN_REPLY`.\n\n⚠️ Право есть **только у владельца контента**; для чужого видео — `403 FORBIDDEN` (проверено).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Закреплено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "pinComment",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Открепить комментарий",
+        "description": "Снимает закрепление. Те же права, что и у `POST` (иначе `403`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Откреплено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "unpinComment",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/engagement/like": {
+      "post": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Поставить лайк",
+        "description": "Оценка «вверх» для ресурса. `ref` — ObjectId, `refType` — `Video` или `CommunityPost`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Лайк поставлен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "likeResource",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Ref"
+          },
+          {
+            "$ref": "#/components/parameters/RefType"
+          }
+        ]
+      }
+    },
+    "/engagement/dislike": {
+      "post": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Поставить дизлайк",
+        "description": "Оценка «вниз» для ресурса.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Дизлайк поставлен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "dislikeResource",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Ref"
+          },
+          {
+            "$ref": "#/components/parameters/RefType"
+          }
+        ]
+      }
+    },
+    "/engagement/rating": {
+      "delete": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Снять оценку",
+        "description": "Снимает ранее поставленный лайк или дизлайк. Ошибка `RATING_NOT_UPDATED` — если оценки не было.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Оценка снята.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "clearRating",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Ref"
+          },
+          {
+            "$ref": "#/components/parameters/RefType"
+          }
+        ]
+      }
+    },
+    "/engagement/subscribers": {
+      "get": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Подписчики канала",
+        "description": "Список подписчиков. `channelId` обязателен.\n\n**Важно:** `GET /users/{username}/subscribers` не существует — нужен именно этот маршрут.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список подписчиков.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriberList"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "_id": "6ad67d569d171ab979963e2c",
+                      "subscriber": {
+                        "_id": "6ad5e6e9010b26fd37465ac7",
+                        "username": "BeeCat",
+                        "avatarPath": "1792403285853d9ed10ce-d15b-4ab3-8e01-af862f568ffe.jpeg",
+                        "displayName": "BeeCat"
+                      },
+                      "channel": "6aa83e37b232946e10d95630",
+                      "notificationsEnabled": false,
+                      "createdAt": "2026-10-19T20:28:06.344Z",
+                      "updatedAt": "2026-10-19T20:28:06.344Z",
+                      "__v": 0
+                    }
+                  ],
+                  "totalPages": 4,
+                  "isLastPage": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listChannelSubscribers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ChannelId"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      }
+    },
+    "/engagement/{channelId}/subscription": {
+      "parameters": [
+        {
+          "name": "channelId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId канала.",
+          "example": "6aa83e37b232946e10d95630"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Состояние подписки",
+        "description": "Проверяет, подписан ли текущий пользователь на канал. Требует авторизации.\n\n⚠️ Если подписки **нет**, возвращается **`404 RESOURCE_NOT_FOUND`**, а не `{\"subscribed\": false}`. Проверено: до подписки — 404, после — 200, после отписки — снова 404.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Подписка есть.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionState"
+                },
+                "example": {
+                  "subscribed": true,
+                  "notificationsEnabled": false
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Подписки нет (или канала нет).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "RESOURCE_NOT_FOUND",
+                  "errors": [
+                    {
+                      "msg": "Resource doesn't exist."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getSubscriptionState",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/engagement/{channelId}/subscribers": {
+      "parameters": [
+        {
+          "name": "channelId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId канала.",
+          "example": "6aa83e37b232946e10d95630"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Подписаться на канал",
+        "description": "Ошибка `SELF_SUBSCRIPTION_NOT_ALLOWED` — нельзя подписаться на себя.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Подписка оформлена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "subscribeToChannel",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Отписаться от канала",
+        "description": "Ошибка `SELF_UNSUBSCRIPTION_NOT_ALLOWED` — нельзя отписаться от себя.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Подписка отменена.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "unsubscribeFromChannel",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/engagement/{channelId}/subscribers/notifications": {
+      "parameters": [
+        {
+          "name": "channelId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId канала.",
+          "example": "6aa83e37b232946e10d95630"
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Engagement"
+        ],
+        "summary": "Уведомления о новых видео",
+        "description": "Включает или выключает приход уведомлений о новых видео канала.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обновлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "setSubscriptionNotifications",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "notificationsEnabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "notificationsEnabled"
+                ]
+              },
+              "example": {
+                "notificationsEnabled": true
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/playlists": {
+      "get": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Список плейлистов",
+        "description": "**Только для админа/модератора**: обычный авторизованный пользователь получает `403 FORBIDDEN` (проверено). Свои плейлисты — через `GET /users/{username}/playlists`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список плейлистов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listPlaylists",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Создать плейлист",
+        "description": "Тело — `multipart/form-data`: `name`, `description`, `visibility`, `thumbnail`.\n\n⚠️ Ответ — **`200 {\"success\": true}` без `_id`**. Созданный плейлист ищите в `GET /users/{username}/playlists`.\n\nОшибки: `REACHED_PLAYLIST_LIMIT`, `VISIBILITY_REQUIRED`, `VISIBILITY_INVALID`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Плейлист создан (без id).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "createPlaylist",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "unlisted",
+                      "private"
+                    ]
+                  },
+                  "thumbnail": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Обложка (опц.)."
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/playlists/{playlistId}": {
+      "parameters": [
+        {
+          "name": "playlistId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId плейлиста.",
+          "example": "695811dccd9ae6bc54030f72"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Плейлист",
+        "description": "Публичный. Состав плейлиста приходит в `items[]` — отдельного `GET /playlists/{id}/videos` не существует.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Плейлист.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Playlist"
+                },
+                "example": {
+                  "_id": "695811dccd9ae6bc54030f72",
+                  "owner": {
+                    "_id": "686e9f61d6a15bf980dda996",
+                    "username": "morich",
+                    "avatarPath": "17864680996636b83cb03-e7b5-4f7c-8fb4-11b26d7deec6.jpeg",
+                    "displayName": "morich"
+                  },
+                  "name": "Роблокс",
+                  "description": "Видео по роблоксу, йооу",
+                  "thumbnailPath": null,
+                  "visibility": "public",
+                  "stats": {
+                    "videos": 7
+                  },
+                  "createdAt": "2026-01-02T18:43:40.368Z",
+                  "updatedAt": "2026-09-20T09:13:56.384Z",
+                  "__v": 0,
+                  "items": [
+                    {
+                      "_id": "695811e7cd9ae6bc54030fb8",
+                      "playlist": "695811dccd9ae6bc54030f72",
+                      "video": {
+                        "_id": "69540c6516b8e2e63a07a98e",
+                        "title": "на эту кнопку ❌ нельзя ❌ ЖМать...",
+                        "description": "Вы думали что на эту кнопку можно жмать? А нажимать?\nА как насчёт не нажимать на неё? Сегодня мы на неё нажмём…",
+                        "url": "PUfwCScgWUw5Z",
+                        "thumbnailPath": "17671166638960bb887fe-ff93-4a7f-b432-559e629f2647.jpeg",
+                        "uploadedBy": {
+                          "_id": "686e9f61d6a15bf980dda996",
+                          "username": "morich",
+                          "displayName": "morich"
+                        },
+                        "length": 329.344,
+                        "createdAt": "2025-12-30T17:31:17.697Z",
+                        "tags": "roblox, роблокс, не, нажимай, на, кнопку, don&#x27;t, touch, the, button, морич, morich"
+                      },
+                      "order": 10,
+                      "createdAt": "2026-01-02T18:43:51.527Z",
+                      "updatedAt": "2026-01-02T18:43:51.527Z",
+                      "__v": 0
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getPlaylist"
+      },
+      "patch": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Редактировать плейлист",
+        "description": "Требует авторизации (владелец).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обновлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "updatePlaylist",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "unlisted",
+                      "private"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "delete": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Удалить плейлист",
+        "description": "Требует авторизации (владелец).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Удалено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "deletePlaylist",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/playlists/{playlistId}/videos/{videoId}": {
+      "parameters": [
+        {
+          "name": "playlistId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId плейлиста.",
+          "example": "695811dccd9ae6bc54030f72"
+        },
+        {
+          "name": "videoId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 20
+          },
+          "description": "URL-ид видео (например `JS8iyxhxktlY-`).",
+          "example": "JS8iyxhxktlY-"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Добавить видео в плейлист",
+        "description": "Ошибки: `VIDEO_ALREADY_IN_PLAYLIST`, `REACHED_VIDEO_LIMIT`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Видео добавлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "addVideoToPlaylist",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Обновить видео в плейлисте",
+        "description": "⚠️ **Не работает: запрос зависает без ответа.** `OPTIONS` рекламирует `PUT` (`Allow: DELETE, POST, PUT`), но и с телом `{\"order\":1}`, и без тела сервер не отвечает дольше 12 c (проверено дважды).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обновлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "updatePlaylistVideo",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "deprecated": true
+      },
+      "delete": {
+        "tags": [
+          "Playlists"
+        ],
+        "summary": "Убрать видео из плейлиста",
+        "description": "Удаляет запись из плейлиста.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Удалено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "removeVideoFromPlaylist",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/community/posts": {
+      "post": {
+        "tags": [
+          "Community"
+        ],
+        "summary": "Создать пост в сообществе",
+        "description": "Маршрут существует (`Allow: GET, HEAD, POST`), но для обычного аккаунта возвращает **`403 FORBIDDEN`** (проверено). Похоже, требуется особый статус канала; публичного способа включить это через API не обнаружено.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Пост создан.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommunityPost"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "createCommunityPost",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              },
+              "example": {
+                "content": "текст поста"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/community/{username}/posts": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Username"
+        }
+      ],
+      "x-path-precedence": "Конфликт с `/community/posts/{postId}`: оба пути подходят под шаблон `/community/{x}/posts` vs `/community/posts/{y}`. На сервере побеждает **литеральный** сегмент `posts`, поэтому `GET /community/posts/{postId}` никогда не попадёт в `/community/{username}/posts`. В генераторах клиентов, сортирующих пути по шаблону, ставьте `/community/posts/{postId}` раньше.",
+      "get": {
+        "tags": [
+          "Community"
+        ],
+        "summary": "Посты пользователя",
+        "description": "Публичная лента постов сообщества. Сайт запрашивает `limit=6`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список постов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommunityPostList"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "_id": "6ad625b5010b26fd374725a5",
+                      "user": {
+                        "_id": "69910494c8807d937055b73f",
+                        "username": "klodska",
+                        "avatarPath": "178776199248424b4d02a-b6b1-49e9-8556-6f95ff69e042.jpeg",
+                        "badgePath": null,
+                        "subscribers": 35,
+                        "displayName": "klodska"
+                      },
+                      "content": "чё вы как брателлы",
+                      "attachments": [],
+                      "likes": 2,
+                      "dislikes": 0,
+                      "isEdited": false,
+                      "createdAt": "2026-10-19T14:14:13.243Z",
+                      "updatedAt": "2026-10-19T18:52:20.169Z",
+                      "__v": 0
+                    }
+                  ],
+                  "totalPages": 3,
+                  "isLastPage": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listCommunityPosts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      }
+    },
+    "/community/posts/{postId}": {
+      "parameters": [
+        {
+          "name": "postId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId поста.",
+          "example": "6ad625b5010b26fd374725a5"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Community"
+        ],
+        "summary": "Пост по id",
+        "description": "Публичный просмотр отдельного поста.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Пост.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommunityPost"
+                },
+                "example": {
+                  "_id": "6ad625b5010b26fd374725a5",
+                  "user": {
+                    "_id": "69910494c8807d937055b73f",
+                    "username": "klodska",
+                    "avatarPath": "178776199248424b4d02a-b6b1-49e9-8556-6f95ff69e042.jpeg",
+                    "badgePath": null,
+                    "displayName": "klodska"
+                  },
+                  "content": "чё вы как брателлы",
+                  "attachments": [],
+                  "likes": 2,
+                  "dislikes": 0,
+                  "isEdited": false,
+                  "createdAt": "2026-10-19T14:14:13.243Z"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getCommunityPost"
+      },
+      "patch": {
+        "tags": [
+          "Community"
+        ],
+        "summary": "Редактировать пост",
+        "description": "Требует авторизации (автор). После успеха `isEdited` становится `true`.",
+        "x-verified": "derived",
+        "responses": {
+          "200": {
+            "description": "Обновлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "updateCommunityPost",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              },
+              "example": {
+                "content": "новый текст поста"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "delete": {
+        "tags": [
+          "Community"
+        ],
+        "summary": "Удалить пост",
+        "description": "Требует авторизации (автор).",
+        "x-verified": "derived",
+        "responses": {
+          "200": {
+            "description": "Удалено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "deleteCommunityPost",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/community/polls/{pollId}/vote": {
+      "parameters": [
+        {
+          "name": "pollId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId опроса.",
+          "example": "6b1a2c3d4e5f60718293a4b5"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Community"
+        ],
+        "summary": "Голосовать в опросе",
+        "description": "`options` — массив ObjectId выбранных опций. Для single-choice передаётся один элемент.\n\nОшибки: `INVALID_POLL`, `POLL_EXPIRED`, `INVALID_VOTE_OPTIONS`, `MULTIPLE_CHOICE_NOT_SUPPORTED`.",
+        "x-verified": "derived",
+        "responses": {
+          "200": {
+            "description": "Голос учтён.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "voteInPoll",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{24}$"
+                    }
+                  }
+                },
+                "required": [
+                  "options"
+                ]
+              },
+              "example": {
+                "options": [
+                  "6b1a2c3d4e5f60718293a4b5"
+                ]
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/live/{liveChannelId}": {
+      "parameters": [
+        {
+          "name": "liveChannelId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId live-канала.",
+          "example": "6ad40af79010a953622cfa46"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Live"
+        ],
+        "summary": "Live-канал",
+        "description": "Информация о стриме. Медиапотоки отдаются отдельно, по путям `/live/hls/{id}/index.m3u8` и `/live/flv/{id}`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Live-канал.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveChannel"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "getLiveChannel"
+      },
+      "patch": {
+        "tags": [
+          "Live"
+        ],
+        "summary": "Изменить данные стрима",
+        "description": "**Только владелец** (иначе `403 FORBIDDEN`). Ошибка `TITLE_INVALID` — заголовок должен быть 3–50 символов.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Обновлено.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "updateLiveChannel",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 50
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/live/{liveChannelId}/moderators": {
+      "parameters": [
+        {
+          "name": "liveChannelId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId live-канала.",
+          "example": "6ab8ec5fbee04faf2d9ebc4f"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Live"
+        ],
+        "summary": "Модераторы стрима",
+        "description": "Список модераторов. **Только для владельца/модератора** — иначе `403 FORBIDDEN` (проверено).\n\nREST-методов добавления/снятия модератора нет (`POST …/moderators` → 404): это делается через Socket.IO (`live:addModerator`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список модераторов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModeratorList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listLiveModerators",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ]
+      }
+    },
+    "/live/{liveChannelId}/punishments": {
+      "parameters": [
+        {
+          "name": "liveChannelId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId live-канала.",
+          "example": "6ab8ec5fbee04faf2d9ebc4f"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Live"
+        ],
+        "summary": "Наказания в стриме",
+        "description": "История банов и мутов. **Только для владельца/модератора** (`403 FORBIDDEN`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список наказаний.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PunishmentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listLivePunishments",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/ModerationType"
+          }
+        ]
+      }
+    },
+    "/live/{liveChannelId}/banned": {
+      "parameters": [
+        {
+          "name": "liveChannelId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "description": "ObjectId live-канала.",
+          "example": "6ab8ec5fbee04faf2d9ebc4f"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Live"
+        ],
+        "summary": "Забаненные в стриме",
+        "description": "Список забаненных пользователей. **Только для владельца/модератора** (`403 FORBIDDEN`).",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список забаненных.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PunishmentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listLiveBanned",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/ModerationType"
+          }
+        ]
+      }
+    },
+    "/reports": {
+      "get": {
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Список жалоб",
+        "description": "Список жалоб. **Только для админа/модератора.** При пустой выборке возвращает `404 PAGE_NOT_FOUND` даже для `page=1` (проверено) — «пусто» и «нет прав» неразличимы по коду.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Список жалоб.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/PageNotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "listReports",
+        "security": [
+          {
+            "accessToken": [],
+            "refreshToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Подать жалобу",
+        "description": "Публичный маршрут — жалобу может подать и гость.\n\n`ref` — ObjectId жалобного ресурса, `refType` — `Video` / `CommunityPost` / `LiveChannel`.\n\nОшибки: `REF_REQUIRED`, `REF_TYPE_REQUIRED`, `ID_INVALID`, `REASON_REQUIRED`, `REASON_INVALID`, `INFO_REQUIRED`, `INFO_TOO_LONG`, `REPORT_NOT_RESOLVED` (предыдущая жалоба ещё не рассмотрена), `REPORT_ALREADY_RESOLVED`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Жалоба принята.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "operationId": "createReport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{24}$",
+                    "description": "ObjectId жалобного ресурса."
+                  },
+                  "refType": {
+                    "type": "string",
+                    "enum": [
+                      "Video",
+                      "CommunityPost",
+                      "LiveChannel"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "spam",
+                      "nudity",
+                      "hate",
+                      "harassment",
+                      "copyright",
+                      "other"
+                    ]
+                  },
+                  "info": {
+                    "type": "string",
+                    "description": "Дополнительная информация."
+                  }
+                },
+                "required": [
+                  "ref",
+                  "refType",
+                  "reason",
+                  "info"
+                ]
+              },
+              "example": {
+                "ref": "6ad40af79010a953622cfa46",
+                "refType": "Video",
+                "reason": "spam",
+                "info": "спам"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/search": {
+      "get": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "Поиск",
+        "description": "Ищет видео или пользователей. **Параметр запроса называется `query`, не `q`** — с `q` сервер отвечает `400 search.QUERY_REQUIRED`.\n\n`type` обязателен: `videos` или `users`.",
+        "x-verified": "live",
+        "responses": {
+          "200": {
+            "description": "Результаты поиска. Форма элементов зависит от `type`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/VideoList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UserSearchResultList"
+                    }
+                  ],
+                  "description": "Форма элементов зависит от параметра `type`: для `type=videos` — объекты видео, для `type=users` — объекты пользователей."
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "operationId": "search",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SearchQuery"
+          },
+          {
+            "$ref": "#/components/parameters/SearchType"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Category"
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "accessToken": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "accessToken",
+        "description": "JWT с данными пользователя, живёт **5 секунд** (`Max-Age=5`). Выставляется `POST /auth/login` и автоматически продлевается сервером на любом запросе с валидным `refreshToken` (в ответе приходит новый `Set-Cookie: accessToken=…`). Вручную обновлять не нужно."
+      },
+      "refreshToken": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "refreshToken",
+        "description": "JWT только с `sessionId`, живёт 1 год. Основной «ключ сессии»: пока он есть, сервер сам выдаёт новые `accessToken`. Удаляется при `POST /auth/logout`."
+      }
+    },
+    "parameters": {
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Номер страницы, начиная с 1.",
+        "example": 1
+      },
+      "PageOptional": {
+        "name": "page",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Номер страницы, начиная с 1. Если не передан — `400 PAGE_INVALID`.",
+        "example": 1
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25
+        },
+        "description": "Количество элементов на странице, 1–25. `limit=26+` → `400 LIMIT_INVALID`.",
+        "example": 10
+      },
+      "LimitOptional": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25
+        },
+        "description": "Количество элементов на странице, 1–25. Если не передан — `400 LIMIT_INVALID`.",
+        "example": 10
+      },
+      "Username": {
+        "name": "username",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9]{3,16}$"
+        },
+        "description": "Имя пользователя (логин), а не ObjectId.",
+        "example": "klodska"
+      },
+      "CommentId": {
+        "name": "commentId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{24}$"
+        },
+        "description": "ObjectId комментария.",
+        "example": "6ad511fb010b26fd37450452"
+      },
+      "VideoUrlId": {
+        "name": "videoId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 20
+        },
+        "description": "URL-ид видео (используется в `/watch?v=<id>`), а не ObjectId.",
+        "example": "JS8iyxhxktlY-"
+      },
+      "Ref": {
+        "name": "ref",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{24}$"
+        },
+        "description": "ObjectId ресурса, к которому относится комментарий/оценка/жалоба.",
+        "example": "6ad40af79010a953622cfa46"
+      },
+      "RefType": {
+        "name": "refType",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "Video",
+            "CommunityPost"
+          ]
+        },
+        "description": "Тип ресурса, к которому относится комментарий/оценка/жалоба.",
+        "example": "Video"
+      },
+      "VideoSort": {
+        "name": "sort",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "popular",
+            "newest",
+            "oldest"
+          ]
+        },
+        "description": "Порядок сортировки каталога.",
+        "example": "newest"
+      },
+      "TimeRange": {
+        "name": "timeRange",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "all",
+            "hour",
+            "day",
+            "week",
+            "month"
+          ]
+        },
+        "description": "Период выборки.",
+        "example": "all"
+      },
+      "RestrictionSort": {
+        "name": "restrictionSort",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "all-ages",
+            "all"
+          ]
+        },
+        "description": "Показывать ли видео с чувствительным контентом.",
+        "example": "all-ages"
+      },
+      "Category": {
+        "name": "category",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "Gaming",
+            "Music",
+            "Art",
+            "Comedy",
+            "Entertainment",
+            "News",
+            "Sports",
+            "Technology",
+            "Travel",
+            "Tutorial",
+            "Animals",
+            "Science"
+          ]
+        },
+        "description": "Категория видео.",
+        "example": "Gaming"
+      },
+      "CommentSort": {
+        "name": "sort",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "popular",
+            "newest",
+            "oldest"
+          ]
+        },
+        "description": "Порядок сортировки комментариев.",
+        "example": "newest"
+      },
+      "SearchQuery": {
+        "name": "query",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": "Поисковый запрос. **Внимание:** параметр называется `query`, не `q` — с `q` сервер отвечает `search.QUERY_REQUIRED`.",
+        "example": "music"
+      },
+      "SearchType": {
+        "name": "type",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "videos",
+            "users"
+          ]
+        },
+        "description": "Что искать: видео или пользователей.",
+        "example": "videos"
+      },
+      "ChannelId": {
+        "name": "channelId",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{24}$"
+        },
+        "description": "ObjectId канала.",
+        "example": "6aa83e37b232946e10d95630"
+      },
+      "Hidden": {
+        "name": "hidden",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "boolean"
+        },
+        "description": "Показать скрытые (черновики/приватные) элементы. Доступно только владельцу.",
+        "example": false
+      },
+      "ModerationType": {
+        "name": "type",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "ban",
+            "mute"
+          ]
+        },
+        "description": "Тип наказания.",
+        "example": "ban"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Ошибка валидации. Тело содержит список конкретных невалидных полей.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "PAGE_INVALID",
+              "errors": [
+                {
+                  "msg": "Invalid page number."
+                },
+                {
+                  "msg": "Invalid limit."
+                }
+              ]
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Нет действующей сессии.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "UNAUTHORIZED",
+              "errors": [
+                {
+                  "msg": "Unauthorized."
+                }
+              ]
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Доступ запрещён.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "FORBIDDEN",
+              "errors": [
+                {
+                  "msg": "Forbidden."
+                }
+              ]
+            }
+          }
+        }
+      },
+      "ResourceNotFound": {
+        "description": "Ресурс не существует. Тело: `{\"code\":\"RESOURCE_NOT_FOUND\", …}`.\n\nЕсли неверна **структура** пути (например `GET /users/{u}/subscribers`), сервер отвечает `404` с телом `{\"errors\":[{\"msg\":\"API route not found\"}]}` — без поля `code`.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "RESOURCE_NOT_FOUND",
+              "errors": [
+                {
+                  "msg": "Resource doesn't exist."
+                }
+              ]
+            }
+          }
+        }
+      },
+      "PageNotFound": {
+        "description": "Страница за пределами выборки — в том числе когда выборка пуста.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "PAGE_NOT_FOUND",
+              "errors": [
+                {
+                  "msg": "Page doesn't exist."
+                }
+              ]
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Превышен лимит запросов. Действуют два счётчика: глобальный (1000 запросов / ~15 мин по IP) и **по маршруту** (10 запросов / окно).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "AG_INDEX_INVALID",
+                    "AG_THUMBNAILS_NOT_AVAILABLE",
+                    "BADGE_NOT_FOUND",
+                    "BANNED_FROM_THIS_LIVE",
+                    "BANNED_USER_SUCCESSFULLY",
+                    "BIO_REQUIRED",
+                    "BIO_TOO_LONG",
+                    "BOOLEAN_INVALID",
+                    "CANNOT_PUNISH_OWNER",
+                    "CANT_PIN_REPLY",
+                    "CAPTCHA_FAILED",
+                    "CAPTCHA_REQUIRED",
+                    "CATEGORY_INVALID",
+                    "CHAT_NOT_FOUND",
+                    "CHAT_RATE_LIMIT",
+                    "COMMENT_ID_REQUIRED",
+                    "COMMENT_NOT_FOUND",
+                    "DESCRIPTION_INVALID",
+                    "DESCRIPTION_TOO_LONG",
+                    "DISPLAY_NAME_CHANGE_NOT_ALLOWED",
+                    "DISPLAY_NAME_INVALID",
+                    "DISPLAY_NAME_INVALID_LENGTH",
+                    "DISPLAY_NAME_REQUIRED",
+                    "DRAFT_ID_REQUIRED",
+                    "DUPLICATE_GROUP_NAME",
+                    "EMAIL_ALREADY_VERIFIED",
+                    "EMAIL_INVALID",
+                    "EMAIL_NOT_VERIFIED",
+                    "EMAIL_REQUIRED",
+                    "EMAIL_TAKEN",
+                    "FIELD_REQUIRED",
+                    "FILE_TOO_LARGE",
+                    "FORBIDDEN",
+                    "ID_INVALID",
+                    "INFO_REQUIRED",
+                    "INFO_TOO_LONG",
+                    "INTERNAL_SERVER_ERROR",
+                    "INVALID_FILE_TYPE",
+                    "INVALID_JSON",
+                    "INVALID_MESSAGE_EMPTY",
+                    "INVALID_MESSAGE_TOO_LONG",
+                    "INVALID_POLL",
+                    "INVALID_SLOW_MODE_VALUE",
+                    "INVALID_TIME",
+                    "INVALID_VOTE_OPTIONS",
+                    "LIMIT_INVALID",
+                    "LIVE_NOT_FOUND",
+                    "MESSAGE_DELETED_SUCCESSFULLY",
+                    "MESSAGE_NOT_FOUND",
+                    "MODERATOR_ADDED_SUCCESSFULLY",
+                    "MODERATOR_LIMIT_REACHED",
+                    "MODERATOR_REMOVED_SUCCESSFULLY",
+                    "MULTIPLE_CHOICE_NOT_SUPPORTED",
+                    "MUTED_IN_THIS_CHAT",
+                    "MUTED_USER_SUCCESSFULLY",
+                    "NOTE_REQUIRED",
+                    "NOTE_TOO_LONG",
+                    "NO_CHANGES_MADE",
+                    "NUMBER_INVALID",
+                    "PAGE_INVALID",
+                    "PAGE_NOT_FOUND",
+                    "PASSWORDS_NOT_MATCH",
+                    "PASSWORD_INVALID",
+                    "PASSWORD_REQUIRED",
+                    "PINNED_INVALID",
+                    "PLAYLIST_ID_REQUIRED",
+                    "PLAYLIST_NOT_FOUND",
+                    "POLL_EXPIRED",
+                    "PROFILE_THEME_CUSTOM_INVALID",
+                    "PROFILE_THEME_PREMIUM_REQUIRED",
+                    "PROFILE_THEME_PRESET_INVALID",
+                    "QUERY_REQUIRED",
+                    "RATING_NOT_UPDATED",
+                    "REACHED_ACCOUNT_LIMIT",
+                    "REACHED_PLAYLIST_LIMIT",
+                    "REACHED_VIDEO_LIMIT",
+                    "REASON_INVALID",
+                    "REASON_REQUIRED",
+                    "REF_REQUIRED",
+                    "REF_TYPE_INVALID",
+                    "REF_TYPE_REQUIRED",
+                    "REPORT_ALREADY_RESOLVED",
+                    "REPORT_ID_REQUIRED",
+                    "REPORT_NOT_RESOLVED",
+                    "RESOURCE_NOT_FOUND",
+                    "SELF_SUBSCRIPTION_NOT_ALLOWED",
+                    "SELF_UNSUBSCRIPTION_NOT_ALLOWED",
+                    "SET_SLOW_MODE_SUCCESSFULLY",
+                    "SLOW_MODE_ACTIVE",
+                    "SORT_REQUIRED",
+                    "TAGS_TOO_LONG",
+                    "TERMS_INVALID",
+                    "TERMS_REQUIRED",
+                    "TEXT_LENGTH_INVALID",
+                    "TEXT_REQUIRED",
+                    "TEXT_TOO_LONG",
+                    "THUMBNAIL_FILE_REQUIRED",
+                    "TITLE_INVALID",
+                    "TOKEN_INVALID",
+                    "TOO_MANY_REQUESTS",
+                    "TOO_MANY_VIDEOS",
+                    "TYPE_INVALID",
+                    "TYPE_REQUIRED",
+                    "UNAUTHORIZED",
+                    "UNBANNED_USER_SUCCESSFULLY",
+                    "UNMUTED_USER_SUCCESSFULLY",
+                    "URL_INVALID",
+                    "URL_REQUIRED",
+                    "USERNAME_INVALID",
+                    "USERNAME_REQUIRED",
+                    "USERNAME_TAKEN",
+                    "USER_ID_REQUIRED",
+                    "USER_NOT_BANNED",
+                    "USER_NOT_FOUND",
+                    "USER_NOT_MUTED",
+                    "VIDEO_ALREADY_IN_PLAYLIST",
+                    "VIDEO_ALREADY_UPLOADED",
+                    "VIDEO_FILE_REQUIRED",
+                    "VIDEO_ID_REQUIRED",
+                    "VIDEO_NOT_FOUND",
+                    "VIDEO_NOT_PUBLISHED",
+                    "VIDEO_STATUS_MISSING",
+                    "VISIBILITY_INVALID",
+                    "VISIBILITY_REQUIRED",
+                    "WRONG_PASSWORD"
+                  ]
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "msg": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "example": {
+              "errors": [
+                {
+                  "msg": "You made too many requests."
+                }
+              ]
+            }
+          }
+        },
+        "headers": {
+          "X-RateLimit-Limit": {
+            "description": "Лимит глобального счётчика (1000).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Remaining": {
+            "description": "Сколько запросов осталось в окне.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Reset": {
+            "description": "Unix-время сброса окна.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "Retry-After": {
+            "description": "Секунд до сброса (только при 429).",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "ServerError": {
+        "description": "Внутренняя ошибка сервера.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "INTERNAL_SERVER_ERROR",
+              "errors": [
+                {
+                  "msg": "Internal server error."
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "AG_INDEX_INVALID",
+              "AG_THUMBNAILS_NOT_AVAILABLE",
+              "BADGE_NOT_FOUND",
+              "BANNED_FROM_THIS_LIVE",
+              "BANNED_USER_SUCCESSFULLY",
+              "BIO_REQUIRED",
+              "BIO_TOO_LONG",
+              "BOOLEAN_INVALID",
+              "CANNOT_PUNISH_OWNER",
+              "CANT_PIN_REPLY",
+              "CAPTCHA_FAILED",
+              "CAPTCHA_REQUIRED",
+              "CATEGORY_INVALID",
+              "CHAT_NOT_FOUND",
+              "CHAT_RATE_LIMIT",
+              "COMMENT_ID_REQUIRED",
+              "COMMENT_NOT_FOUND",
+              "DESCRIPTION_INVALID",
+              "DESCRIPTION_TOO_LONG",
+              "DISPLAY_NAME_CHANGE_NOT_ALLOWED",
+              "DISPLAY_NAME_INVALID",
+              "DISPLAY_NAME_INVALID_LENGTH",
+              "DISPLAY_NAME_REQUIRED",
+              "DRAFT_ID_REQUIRED",
+              "DUPLICATE_GROUP_NAME",
+              "EMAIL_ALREADY_VERIFIED",
+              "EMAIL_INVALID",
+              "EMAIL_NOT_VERIFIED",
+              "EMAIL_REQUIRED",
+              "EMAIL_TAKEN",
+              "FIELD_REQUIRED",
+              "FILE_TOO_LARGE",
+              "FORBIDDEN",
+              "ID_INVALID",
+              "INFO_REQUIRED",
+              "INFO_TOO_LONG",
+              "INTERNAL_SERVER_ERROR",
+              "INVALID_FILE_TYPE",
+              "INVALID_JSON",
+              "INVALID_MESSAGE_EMPTY",
+              "INVALID_MESSAGE_TOO_LONG",
+              "INVALID_POLL",
+              "INVALID_SLOW_MODE_VALUE",
+              "INVALID_TIME",
+              "INVALID_VOTE_OPTIONS",
+              "LIMIT_INVALID",
+              "LIVE_NOT_FOUND",
+              "MESSAGE_DELETED_SUCCESSFULLY",
+              "MESSAGE_NOT_FOUND",
+              "MODERATOR_ADDED_SUCCESSFULLY",
+              "MODERATOR_LIMIT_REACHED",
+              "MODERATOR_REMOVED_SUCCESSFULLY",
+              "MULTIPLE_CHOICE_NOT_SUPPORTED",
+              "MUTED_IN_THIS_CHAT",
+              "MUTED_USER_SUCCESSFULLY",
+              "NOTE_REQUIRED",
+              "NOTE_TOO_LONG",
+              "NO_CHANGES_MADE",
+              "NUMBER_INVALID",
+              "PAGE_INVALID",
+              "PAGE_NOT_FOUND",
+              "PASSWORDS_NOT_MATCH",
+              "PASSWORD_INVALID",
+              "PASSWORD_REQUIRED",
+              "PINNED_INVALID",
+              "PLAYLIST_ID_REQUIRED",
+              "PLAYLIST_NOT_FOUND",
+              "POLL_EXPIRED",
+              "PROFILE_THEME_CUSTOM_INVALID",
+              "PROFILE_THEME_PREMIUM_REQUIRED",
+              "PROFILE_THEME_PRESET_INVALID",
+              "QUERY_REQUIRED",
+              "RATING_NOT_UPDATED",
+              "REACHED_ACCOUNT_LIMIT",
+              "REACHED_PLAYLIST_LIMIT",
+              "REACHED_VIDEO_LIMIT",
+              "REASON_INVALID",
+              "REASON_REQUIRED",
+              "REF_REQUIRED",
+              "REF_TYPE_INVALID",
+              "REF_TYPE_REQUIRED",
+              "REPORT_ALREADY_RESOLVED",
+              "REPORT_ID_REQUIRED",
+              "REPORT_NOT_RESOLVED",
+              "RESOURCE_NOT_FOUND",
+              "SELF_SUBSCRIPTION_NOT_ALLOWED",
+              "SELF_UNSUBSCRIPTION_NOT_ALLOWED",
+              "SET_SLOW_MODE_SUCCESSFULLY",
+              "SLOW_MODE_ACTIVE",
+              "SORT_REQUIRED",
+              "TAGS_TOO_LONG",
+              "TERMS_INVALID",
+              "TERMS_REQUIRED",
+              "TEXT_LENGTH_INVALID",
+              "TEXT_REQUIRED",
+              "TEXT_TOO_LONG",
+              "THUMBNAIL_FILE_REQUIRED",
+              "TITLE_INVALID",
+              "TOKEN_INVALID",
+              "TOO_MANY_REQUESTS",
+              "TOO_MANY_VIDEOS",
+              "TYPE_INVALID",
+              "TYPE_REQUIRED",
+              "UNAUTHORIZED",
+              "UNBANNED_USER_SUCCESSFULLY",
+              "UNMUTED_USER_SUCCESSFULLY",
+              "URL_INVALID",
+              "URL_REQUIRED",
+              "USERNAME_INVALID",
+              "USERNAME_REQUIRED",
+              "USERNAME_TAKEN",
+              "USER_ID_REQUIRED",
+              "USER_NOT_BANNED",
+              "USER_NOT_FOUND",
+              "USER_NOT_MUTED",
+              "VIDEO_ALREADY_IN_PLAYLIST",
+              "VIDEO_ALREADY_UPLOADED",
+              "VIDEO_FILE_REQUIRED",
+              "VIDEO_ID_REQUIRED",
+              "VIDEO_NOT_FOUND",
+              "VIDEO_NOT_PUBLISHED",
+              "VIDEO_STATUS_MISSING",
+              "VISIBILITY_INVALID",
+              "VISIBILITY_REQUIRED",
+              "WRONG_PASSWORD"
+            ],
+            "description": "Машиночитаемый код ошибки. Полный список — в каталоге `/locales/en/responses.json`."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "msg": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "msg"
+              ]
+            },
+            "description": "Список конкретных ошибок валидации."
+          }
+        },
+        "required": [
+          "code",
+          "errors"
+        ]
+      },
+      "Success": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "SessionUser": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "username": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Например `[\"user\"]`."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "banned",
+              "deleted"
+            ]
+          },
+          "isVerified": {
+            "type": "boolean"
+          },
+          "sessionId": {
+            "type": "string",
+            "description": "id текущей серверной сессии."
+          },
+          "hasPremium": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string",
+            "description": "Иногда присутствует: `access` (поле из JWT)."
+          },
+          "iat": {
+            "type": "integer",
+            "description": "Иногда присутствует: время выпуска JWT."
+          },
+          "exp": {
+            "type": "integer",
+            "description": "Иногда присутствует: время истечения JWT."
+          }
+        },
+        "required": [
+          "_id",
+          "username",
+          "roles"
+        ]
+      },
+      "SessionResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/SessionUser"
+          }
+        },
+        "required": [
+          "user"
+        ]
+      },
+      "VideoStatus": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "encoding",
+              "encoding_finished",
+              "encoding_failed"
+            ]
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Прогресс кодирования в процентах."
+          }
+        },
+        "required": [
+          "success",
+          "status"
+        ]
+      },
+      "VideoDraft": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL-ид, по которому видео будет доступно."
+          },
+          "title": {
+            "type": "string"
+          },
+          "uploadedBy": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$",
+            "description": "ObjectId автора **строкой**, не объект."
+          }
+        },
+        "required": [
+          "_id",
+          "url",
+          "title"
+        ]
+      },
+      "ThumbnailUploaded": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "thumbnailPath": {
+            "type": "string",
+            "description": "Имя файла обложки в `/uploads/thumbnails/`."
+          }
+        },
+        "required": [
+          "success",
+          "thumbnailPath"
+        ]
+      },
+      "SubscriptionState": {
+        "type": "object",
+        "properties": {
+          "subscribed": {
+            "type": "boolean"
+          },
+          "notificationsEnabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "subscribed"
+        ]
+      },
+      "Categories": {
+        "type": "object",
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "Gaming",
+                "Music",
+                "Art",
+                "Comedy",
+                "Entertainment",
+                "News",
+                "Sports",
+                "Technology",
+                "Travel",
+                "Tutorial",
+                "Animals",
+                "Science"
+              ]
+            }
+          }
+        },
+        "required": [
+          "categories"
+        ]
+      },
+      "VideoAuthor": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarPath": {
+            "type": "string"
+          },
+          "badgePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subscribers": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "_id",
+          "username",
+          "displayName"
+        ]
+      },
+      "Video": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL-ид для ссылки `/watch?v=<url>`."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "string",
+            "description": "Теги одной строкой через запятую."
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "Gaming",
+              "Music",
+              "Art",
+              "Comedy",
+              "Entertainment",
+              "News",
+              "Sports",
+              "Technology",
+              "Travel",
+              "Tutorial",
+              "Animals",
+              "Science",
+              null
+            ]
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "unlisted",
+              "private"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "upload_canceled",
+              "uploading",
+              "uploaded",
+              "encoding",
+              "encoding_failed",
+              "encoding_finished",
+              "published",
+              "offline",
+              "live",
+              "ended"
+            ],
+            "description": "Присутствует в ответах списков; в `GET /videos/{id}` поле не возвращается."
+          },
+          "deletion": {
+            "type": "string",
+            "description": "Статус запроса на удаление (`none` и др.). Есть только в списках."
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "thumbnailPath": {
+            "type": "string"
+          },
+          "agThumbnails": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Автогенерируемые превью."
+          },
+          "uploadedBy": {
+            "$ref": "#/components/schemas/VideoAuthor"
+          },
+          "length": {
+            "type": "number",
+            "description": "Длительность в секундах."
+          },
+          "formattedLength": {
+            "type": "string",
+            "description": "Длительность в формате `m:ss`. Есть только в списках."
+          },
+          "views": {
+            "type": "integer"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "dislikes": {
+            "type": "integer"
+          },
+          "isSensitive": {
+            "type": "boolean",
+            "description": "Видео помечено как чувствительный контент."
+          },
+          "isFeatured": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "url",
+          "title"
+        ]
+      },
+      "VideoList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Video"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "totalPages",
+          "isLastPage"
+        ]
+      },
+      "UserSummary": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarPath": {
+            "type": "string"
+          },
+          "badgePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subscribers": {
+            "type": "integer",
+            "description": "Количество подписчиков (если присутствует в ответе)."
+          }
+        },
+        "required": [
+          "_id",
+          "username",
+          "displayName"
+        ]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarPath": {
+            "type": "string"
+          },
+          "bannerPath": {
+            "type": "string"
+          },
+          "backgroundPath": {
+            "type": "string"
+          },
+          "badgePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subscribers": {
+            "type": "integer"
+          },
+          "bio": {
+            "type": "string",
+            "description": "HTML-экранированный текст."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "channel": {
+            "type": "object",
+            "properties": {
+              "profileTheme": {
+                "type": "object",
+                "properties": {
+                  "custom": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "properties": {
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "presetId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "presetId"
+                ]
+              },
+              "featuredVideo": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Video"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "featuredChannels": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "groups": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "channels": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/UserSummary"
+                              }
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "channels"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Проверено: у обычного канала `null`."
+              }
+            }
+          }
+        },
+        "required": [
+          "_id",
+          "username",
+          "displayName"
+        ]
+      },
+      "UserSearchResult": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarPath": {
+            "type": "string"
+          },
+          "bannerPath": {
+            "type": "string"
+          },
+          "backgroundPath": {
+            "type": "string"
+          },
+          "badgePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bio": {
+            "type": "string"
+          },
+          "subscribers": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "score": {
+            "type": "number",
+            "description": "Релевантность совпадения (только в поиске)."
+          }
+        },
+        "required": [
+          "_id",
+          "username",
+          "displayName"
+        ]
+      },
+      "UserSearchResultList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserSearchResult"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "Comment": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$",
+            "description": "ObjectId ресурса."
+          },
+          "refType": {
+            "type": "string",
+            "enum": [
+              "Video",
+              "CommunityPost"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "dislikes": {
+            "type": "integer"
+          },
+          "replies": {
+            "type": "integer",
+            "description": "Количество ответов."
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ObjectId родительского комментария."
+          },
+          "isPinned": {
+            "type": "boolean"
+          },
+          "isEdited": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "__v": {
+            "type": "integer",
+            "description": "Версия документа в MongoDB."
+          }
+        },
+        "required": [
+          "_id",
+          "user",
+          "ref",
+          "refType",
+          "text"
+        ]
+      },
+      "CommentList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Comment"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "PlaylistItem": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "playlist": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "video": {
+            "$ref": "#/components/schemas/Video"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Порядковый номер видео в плейлисте."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "__v": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "_id",
+          "playlist",
+          "video"
+        ]
+      },
+      "Playlist": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "owner": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UserSummary"
+              },
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{24}$"
+              }
+            ],
+            "description": "Объект автора в `GET /playlists/{id}`, но **строка ObjectId** в списке `GET /users/{u}/playlists`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "thumbnailPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "unlisted",
+              "private"
+            ]
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "videos": {
+                "type": "integer"
+              }
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaylistItem"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "__v": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "_id",
+          "owner",
+          "name"
+        ]
+      },
+      "PlaylistList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Playlist"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "CommunityPost": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "content": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "dislikes": {
+            "type": "integer"
+          },
+          "isEdited": {
+            "type": "boolean"
+          },
+          "poll": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Poll"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Опрос, прикреплённый к посту."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "__v": {
+            "type": "integer",
+            "description": "Версия документа в MongoDB (есть в ответах списков)."
+          }
+        },
+        "required": [
+          "_id",
+          "user",
+          "content"
+        ]
+      },
+      "CommunityPostList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommunityPost"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "PollOption": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "text": {
+            "type": "string"
+          },
+          "votes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "_id",
+          "text"
+        ]
+      },
+      "Poll": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PollOption"
+            }
+          },
+          "multipleChoice": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "question",
+          "options"
+        ]
+      },
+      "Subscriber": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "subscriber": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "channel": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "notificationsEnabled": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "__v": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "_id",
+          "subscriber",
+          "channel"
+        ]
+      },
+      "SubscriberList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Subscriber"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "NEW_COMMENT",
+              "NEW_REPLY",
+              "MENTION",
+              "REPORT_RESOLVED",
+              "NEW_POST",
+              "SYSTEM_MESSAGE"
+            ]
+          },
+          "isRead": {
+            "type": "boolean"
+          },
+          "refType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Video"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "data": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
+          },
+          "caller": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "type"
+        ]
+      },
+      "NotificationList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "Moderator": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ]
+      },
+      "ModeratorList": {
+        "type": "object",
+        "properties": {
+          "moderators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Moderator"
+            }
+          }
+        },
+        "required": [
+          "moderators"
+        ]
+      },
+      "Punishment": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "ban",
+              "mute"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "user",
+          "type"
+        ]
+      },
+      "PunishmentList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Punishment"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "LiveChannel": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "user": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$",
+            "description": "ObjectId автора **строкой**, не объект."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "unlisted",
+              "private"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "Gaming",
+              "Music",
+              "Art",
+              "Comedy",
+              "Entertainment",
+              "News",
+              "Sports",
+              "Technology",
+              "Travel",
+              "Tutorial",
+              "Animals",
+              "Science"
+            ]
+          },
+          "tags": {
+            "type": "string"
+          },
+          "thumbnailPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "live",
+              "ended",
+              "offline"
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isLive": {
+            "type": "boolean"
+          },
+          "isLoadedLive": {
+            "type": "boolean",
+            "description": "Поток уже отдаётся медиасервером."
+          },
+          "viewerCount": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "user",
+          "title"
+        ]
+      },
+      "Report": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{24}$"
+          },
+          "refType": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "spam",
+              "nudity",
+              "hate",
+              "harassment",
+              "copyright",
+              "other"
+            ]
+          },
+          "info": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "ref",
+          "refType",
+          "reason"
+        ]
+      },
+      "ReportList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Report"
+            }
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "isLastPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      }
+    }
+  },
+  "x-socketio": {
+    "description": "Realtime-часть API (чат стримов и модерация) реализована через Socket.IO на том же origin, путь по умолчанию `/socket.io`. OpenAPI не описывает WebSocket-транспорт, поэтому события вынесены в это расширение. Клиент: `io({ autoConnect: false })` → `socket.connect()`.",
+    "path": "/socket.io",
+    "x-verified": "live",
+    "handshake": {
+      "request": "GET /socket.io/?EIO=4&transport=polling",
+      "response": "0{\"sid\":\"…\",\"upgrades\":[\"websocket\"],\"pingInterval\":25000,\"pingTimeout\":20000,\"maxPayload\":1000000}",
+      "engineio": 4,
+      "socketio": 4,
+      "pingIntervalMs": 25000,
+      "pingTimeoutMs": 20000,
+      "maxPayloadBytes": 1000000,
+      "note": "Рукопожатие работает и анонимно; действия чата требуют cookie-сессии. Неизвестные события сервер молча игнорирует (ответа нет)."
+    },
+    "errorFormat": {
+      "chat": {
+        "event": "chat:error",
+        "payload": {
+          "code": "<string>"
+        },
+        "observedCodes": [
+          "CHAT_NOT_FOUND",
+          "MESSAGE_NOT_FOUND",
+          "UNAUTHORIZED",
+          "INVALID_MESSAGE_EMPTY"
+        ],
+        "note": "Успешная отправка не имеет ack: сервер рассылает `chat:message` всем в комнате. Перед `chat:message` обязателен `chat:join` — иначе `CHAT_NOT_FOUND`."
+      },
+      "live": {
+        "event": "live:error",
+        "payload": {
+          "code": "<string>"
+        },
+        "observedCodes": [
+          "FORBIDDEN"
+        ],
+        "note": "Ошибки модерации приходят как `live:error` (не `chat:error`)."
+      }
+    },
+    "events": {
+      "chat": {
+        "client_to_server": [
+          {
+            "event": "chat:join",
+            "payload": {
+              "liveChannelId": "<ObjectId>"
+            }
+          },
+          {
+            "event": "chat:message",
+            "payload": {
+              "content": "<string>"
+            }
+          },
+          {
+            "event": "chat:setSlowMode",
+            "payload": {
+              "seconds": "<int>"
+            }
+          },
+          {
+            "event": "chat:delete",
+            "payload": {
+              "messageId": "<ObjectId>"
+            }
+          },
+          {
+            "event": "chat:history",
+            "payload": {}
+          }
+        ],
+        "server_to_client": [
+          {
+            "event": "chat:history",
+            "payload": "Comment[]"
+          },
+          {
+            "event": "chat:message",
+            "payload": "Comment"
+          },
+          {
+            "event": "chat:messageDeleted",
+            "payload": "{ messageId }"
+          },
+          {
+            "event": "chat:state",
+            "payload": "object"
+          },
+          {
+            "event": "chat:slowMode",
+            "payload": "{ seconds }"
+          },
+          {
+            "event": "chat:success",
+            "payload": "{ code }"
+          },
+          {
+            "event": "chat:error",
+            "payload": "{ code }"
+          }
+        ]
+      },
+      "live": {
+        "client_to_server": [
+          {
+            "event": "live:join",
+            "payload": {
+              "liveChannelId": "<ObjectId>"
+            }
+          },
+          {
+            "event": "live:ban",
+            "payload": {
+              "userId": "<ObjectId>",
+              "reason": "<string>",
+              "duration": "<int|undefined>"
+            }
+          },
+          {
+            "event": "live:unban",
+            "payload": {
+              "userId": "<ObjectId>"
+            }
+          },
+          {
+            "event": "live:mute",
+            "payload": {
+              "userId": "<ObjectId>",
+              "reason": "<string>",
+              "clear": "<bool>",
+              "duration": "<int|undefined>"
+            }
+          },
+          {
+            "event": "live:unmute",
+            "payload": {
+              "userId": "<ObjectId>"
+            }
+          },
+          {
+            "event": "live:addModerator",
+            "payload": {
+              "userId": "<ObjectId>"
+            }
+          },
+          {
+            "event": "live:removeModerator",
+            "payload": {
+              "userId": "<ObjectId>"
+            }
+          },
+          {
+            "event": "live:mute-state",
+            "payload": {}
+          }
+        ],
+        "server_to_client": [
+          {
+            "event": "live:viewers",
+            "payload": "<int — количество зрителей>"
+          },
+          {
+            "event": "live:status",
+            "payload": "object"
+          },
+          {
+            "event": "live:started",
+            "payload": "object"
+          },
+          {
+            "event": "live:ended",
+            "payload": "object"
+          },
+          {
+            "event": "live:ban",
+            "payload": "object"
+          },
+          {
+            "event": "live:unban",
+            "payload": "object"
+          },
+          {
+            "event": "live:banned",
+            "payload": "object"
+          },
+          {
+            "event": "live:muted",
+            "payload": "object"
+          },
+          {
+            "event": "live:unmuted",
+            "payload": "object"
+          },
+          {
+            "event": "live:moderatorAdded",
+            "payload": "object"
+          },
+          {
+            "event": "live:moderatorRemoved",
+            "payload": "object"
+          },
+          {
+            "event": "live:success",
+            "payload": "{ code }"
+          },
+          {
+            "event": "live:error",
+            "payload": "{ code }"
+          }
+        ]
+      }
+    },
+    "media": {
+      "hls": {
+        "url_template": "https://retrotube.net/live/hls/{liveChannelId}/index.m3u8"
+      },
+      "flv": {
+        "url_template": "https://retrotube.net/live/flv/{liveChannelId}"
+      }
+    }
+  },
+  "x-non-existent-routes": {
+    "description": "Маршруты, проверенные и НЕ найденные. Приведены, чтобы не тратить время на повторную проверку.",
+    "responseShape": {
+      "status": 404,
+      "body": {
+        "errors": [
+          {
+            "msg": "API route not found"
+          }
+        ]
+      },
+      "note": "В отличие от `RESOURCE_NOT_FOUND`, в этом ответе нет поля `code` — он возвращается, когда неверна **структура** пути, а не сам ресурс."
+    },
+    "routes": [
+      "GET /users/{username}/subscribers",
+      "GET /playlists/{playlistId}/videos",
+      "GET /playlists/{playlistId}/subscribers",
+      "POST /engagement/{channelId}/subscription",
+      "DELETE /engagement/{channelId}/subscription",
+      "GET /admin/users",
+      "GET /admin/videos",
+      "GET /admin/reports",
+      "GET /admin/stats",
+      "GET /moderation",
+      "GET /drafts",
+      "GET /badges",
+      "GET /groups",
+      "GET /captcha",
+      "GET /captcha/generate",
+      "GET /settings",
+      "GET /preferences",
+      "GET /config",
+      "GET /notifications",
+      "GET /messages",
+      "GET /suggest",
+      "GET /tags",
+      "GET /categories",
+      "GET /trending",
+      "GET /stats",
+      "GET /health",
+      "GET /status",
+      "GET /live",
+      "GET /lives",
+      "GET /chat",
+      "GET /chats",
+      "GET /polls",
+      "GET /auth/me",
+      "GET /auth/verify",
+      "GET /auth/verify-email",
+      "GET /auth/resend-verification",
+      "GET /auth/refresh",
+      "GET /auth/token",
+      "GET /auth/password",
+      "GET /auth/change-password",
+      "GET /auth/check"
+    ],
+    "routesWithDifferentBehaviour": [
+      {
+        "paths": [
+          "/videos/latest",
+          "/videos/popular",
+          "/videos/trending",
+          "/videos/random",
+          "/videos/search",
+          "/videos/drafts"
+        ],
+        "status": 400,
+        "code": "URL_INVALID",
+        "note": "Не 404: сегмент разбирается как `videoId`, и отваливается по валидации формата URL-ида. То есть `/videos/latest` — это «видео с id=latest», а не раздел каталога."
+      }
+    ]
+  },
+  "x-rate-limits": {
+    "global": {
+      "limit": 1000,
+      "window": "~15 минут (фиксированное окно)",
+      "scope": "по IP"
+    },
+    "per_route": {
+      "limit": 10,
+      "window": "то же окно",
+      "note": "Например, `GET /search` — 10 запросов, 11-й получает 429."
+    },
+    "headers": [
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset",
+      "Retry-After"
+    ]
+  }
+}
