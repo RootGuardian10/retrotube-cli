@@ -205,6 +205,41 @@ class Client:
         out += ("--%s--\r\n" % boundary).encode("utf-8")
         return out, "multipart/form-data; boundary=%s" % boundary
 
+    def download(self, url, dest):
+        """Потоковое скачивание файла с прогрессом. Возвращает путь и размер."""
+        req = urlrequest.Request(url, headers={"User-Agent": UA})
+        last_err = None
+        for attempt in (1, 2):
+            try:
+                resp = urlrequest.urlopen(req, timeout=TIMEOUT)
+                last_err = None
+                break
+            except urlerror.HTTPError:
+                raise
+            except urlerror.URLError as e:
+                last_err = ApiError(0, "NETWORK", str(getattr(e, "reason", e)))
+                time.sleep(0.7)
+        if last_err is not None:
+            raise last_err
+        total = int(resp.headers.get("Content-Length") or 0)
+        done = 0
+        try:
+            with open(dest, "wb") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    if total:
+                        sys.stdout.write("\r  %d%% (%s из %s)" % (
+                            done * 100 // total, fmt_size(done), fmt_size(total)))
+                        sys.stdout.flush()
+        finally:
+            if total:
+                sys.stdout.write("\n")
+        return dest, done
+
 
 # --------------------------------------------------------------------------- #
 #  Форматирование                                                             #
@@ -240,6 +275,14 @@ def fmt_count(n):
     if n >= 1000:
         return "%.1fK" % (n / 1000)
     return str(n)
+
+
+def fmt_size(n):
+    n = float(n or 0)
+    for unit in ("Б", "КБ", "МБ", "ГБ"):
+        if n < 1024 or unit == "ГБ":
+            return ("%.0f%s" if unit == "Б" else "%.1f%s") % (n, unit)
+        n /= 1024
 
 
 def fmt_length(v):
@@ -339,6 +382,7 @@ class App:
         self.last_comments = []    # последний список комментариев
         self.current_video = None  # выбранное видео (полный объект)
         self.me = None             # данные своей сессии
+        self.edit_mode = False     # режим редактирования канала (/edit)
 
     # ------------------------------------------------------------------ API
 
@@ -559,6 +603,169 @@ class App:
         url = video_watch_url(v)
         print("  Открываю: %s" % url)
         webbrowser.open(url)
+
+    def cmd_download(self, args):
+        if not args:
+            print("  Использование: /download <номер|ссылка|url-id> [имя файла]")
+            return
+        v = self.resolve_video(args[:1])
+        if not v:
+            return
+        self.current_video = v
+        if not v.get("filePath"):
+            print("  У видео нет файла для скачивания (возможно, это стрим или черновик).")
+            return
+        if len(args) > 1:
+            name = args[1].strip('"\'')
+        else:
+            safe = re.sub(r"[^\wа-яА-ЯёЁ\- ]", "_", v.get("title", "video"))[:50].strip() or "video"
+            name = "%s_%s.mp4" % (safe, v.get("url", "x"))
+        if not name.lower().endswith(".mp4"):
+            name += ".mp4"
+        url = media_url(v["filePath"], "videos")
+        print("  Скачиваю %r..." % trunc(v.get("title", ""), 50))
+        try:
+            path, size = self.client.download(url, name)
+            print("  Готово: %s (%s)" % (os.path.abspath(path), fmt_size(size)))
+        except ApiError as e:
+            print("  Ошибка скачивания: %s" % e)
+        except OSError as e:
+            print("  Не удалось записать файл: %s" % e)
+
+    def cmd_info(self, args):
+        """Профиль канала: аватар (скачивается), логин+ник, описание, избранные каналы."""
+        if args:
+            username = args[0].lstrip("@")
+        elif self.current_video:
+            username = (self.current_video.get("uploadedBy") or {}).get("username")
+        else:
+            print("  Использование: /info <username>")
+            return
+        try:
+            prof = self.api("GET", "/users/%s" % username)
+        except ApiError as e:
+            print("  Ошибка: %s" % e)
+            return
+        print("=" * WIDTH)
+        print("  Логин: @%s    Ник: %s" % (prof.get("username", "?"), prof.get("displayName", "?")))
+        print("  Подписчиков: %s | На RetroTube с %s" % (
+            fmt_count(prof.get("subscribers")), fmt_date(prof.get("createdAt"))))
+        bio = clean(prof.get("bio") or "").strip()
+        print("  Описание: %s" % (bio if bio else "(нет)"))
+        # аватар — скачиваем на диск
+        avatar_url = media_url(prof.get("avatarPath"), "avatars")
+        if avatar_url:
+            base = os.path.basename(prof["avatarPath"])
+            dest = os.path.join("avatars", "%s_%s" % (prof.get("username", "user"), base))
+            try:
+                os.makedirs("avatars", exist_ok=True)
+                path, size = self.client.download(avatar_url, dest)
+                print("  Аватар   : сохранён -> %s (%s)" % (os.path.abspath(path), fmt_size(size)))
+            except (ApiError, OSError) as e:
+                print("  Аватар   : %s (не скачался)" % avatar_url)
+        else:
+            print("  Аватар   : (не установлен)")
+        channel = prof.get("channel") or {}
+        # избранные каналы по группам (есть не у всех)
+        fc = channel.get("featuredChannels")
+        if isinstance(fc, dict) and fc.get("groups"):
+            for group in fc["groups"]:
+                chans = group.get("channels") or []
+                print("  Каналы [%s]:" % group.get("name", "?"))
+                for c in chans:
+                    print("    - @%s (%s), подписчиков: %s" % (
+                        c.get("username", "?"), c.get("displayName", "?"),
+                        fmt_count(c.get("subscribers"))))
+        fv = channel.get("featuredVideo")
+        if fv and fv.get("url"):
+            print("  Избранное видео: %r — %s" % (trunc(fv.get("title", ""), 40), video_watch_url(fv)))
+        print("=" * WIDTH)
+
+    # ------------------------------------------------- редактирование канала
+
+    def enter_edit_mode(self):
+        if not self.require_auth():
+            return
+        self.edit_mode = True
+        me = self.refresh_me()
+        print("  Режим редактирования канала @%s. Команды:" % (me or {}).get("username", "?"))
+        print("    /nickname <новый ник>    сменить отображаемый ник")
+        print("    /bio <текст>             описание канала (очистить нельзя)")
+        print("    /theme <пресет>          тема: halloween|terminal|golden|lava|mariana_trench|bluedrop|midnight")
+        print("    /avatar <путь к файлу>   смена аватара")
+        print("    /show                    показать текущие данные")
+        print("    /done                    выйти из режима (обычный режим — /exit в нём тоже)")
+
+    def _patch_profile(self, body, what):
+        try:
+            resp = self.api("PATCH", "/users/%s" % self.me["username"], json_body=body)
+            code = resp.get("code")
+            if code == "NO_CHANGES_MADE":
+                print("  %s: изменений нет (значение уже такое)." % what)
+            else:
+                print("  %s: обновлено." % what)
+        except ApiError as e:
+            if e.code == "DISPLAY_NAME_CHANGE_NOT_ALLOWED":
+                print("  %s: сервер не дал сменить ник (кулдаун после прошлой смены)." % what)
+            else:
+                print("  %s: ошибка — %s" % (what, e))
+
+    def edit_dispatch(self, line):
+        try:
+            tokens = shlex.split(line, posix=True)
+        except ValueError:
+            tokens = line.split()
+        if not tokens:
+            return True
+        cmd = tokens[0].lstrip("/").lower()
+        args = tokens[1:]
+        if cmd in ("done", "exit", "quit", "q"):
+            if cmd in ("quit", "q"):
+                return False  # выйти из программы совсем
+            self.edit_mode = False
+            print("  Выход из режима редактирования.")
+            return True
+        if cmd == "nickname":
+            nick = " ".join(args).strip()
+            if not nick:
+                print("  Использование: /nickname <новый ник>")
+            else:
+                self._patch_profile({"displayName": nick}, "Ник")
+        elif cmd == "bio":
+            text = " ".join(args).strip()
+            if not text:
+                print("  Использование: /bio <текст> (пустая строка сервером игнорируется)")
+            else:
+                self._patch_profile({"bio": text}, "Описание")
+        elif cmd == "theme":
+            presets = ("halloween", "terminal", "golden", "lava",
+                       "mariana_trench", "bluedrop", "midnight")
+            if not args or args[0] not in presets:
+                print("  Использование: /theme <%s>" % "|".join(presets))
+            else:
+                self._patch_profile({"profileTheme": {"presetId": args[0]}}, "Тема")
+        elif cmd == "avatar":
+            path = " ".join(args).strip('"\'')
+            if not path:
+                print("  Использование: /avatar <путь к файлу>")
+            else:
+                print("  Смена аватара недоступна: в API retrotube.net нет эндпоинта загрузки")
+                print("  аватара/баннера (проверено по спецификации, JS сайта и пробами")
+                print("  маршрутов — всё даёт 404). Меняйте аватар через сайт в браузере.")
+        elif cmd == "show":
+            self.cmd_whoami([])
+            try:
+                prof = self.api("GET", "/users/%s" % self.me["username"])
+                print("  Ник: %s" % prof.get("displayName", "?"))
+                print("  Описание: %s" % (clean(prof.get("bio") or "").strip() or "(нет)"))
+            except ApiError as e:
+                print("  (профиль не прочитался: %s)" % e)
+        elif cmd == "help":
+            self.enter_edit_mode()
+        else:
+            print("  В режиме редактирования доступны только команды меню (/help покажет их),")
+            print("  /done — вернуться в обычный режим, /quit — выйти из программы.")
+        return True
 
     def cmd_comments(self, args):
         if not self.current_video:
@@ -952,6 +1159,9 @@ class App:
     /random [open]               случайное видео (open — сразу в браузере)
     /video <n|ссылка|url-id>     детали видео (n — номер из последнего списка)
     /watch [n|ссылка]            открыть видео в браузере
+    /download <n|ссылка> [имя]   скачать видео (mp4) на диск с прогрессом
+    /info [username]             канал: аватар (скачается в .\avatars\), логин+ник,
+                                 описание, избранные каналы по группам
   Общение:
     /comments [стр]              комментарии к выбранному видео
     /comment <текст>             написать комментарий
@@ -964,6 +1174,10 @@ class App:
     /unrate  [n|video "ссылка"]  снять свою оценку
   Каналы:
     /channel <username>          профиль + видео канала
+    /edit [channel]              меню редактирования СВОЕГО канала:
+                                   /nickname <ник>, /bio <текст>, /theme <пресет>,
+                                   /avatar <файл>*, /show, /done
+                                   (* аватар недоступен — в API нет эндпоинта)
     /sub <username>              подписаться
     /unsub <username>            отписаться
     /subcheck <username>         состояние подписки
@@ -988,6 +1202,8 @@ class App:
         line = line.strip()
         if not line:
             return True
+        if self.edit_mode:
+            return self.edit_dispatch(line)
         try:
             tokens = shlex.split(line, posix=True)
         except ValueError:
@@ -1008,9 +1224,17 @@ class App:
             print("  (прервано)")
         return True
 
+    def cmd_edit(self, args):
+        if args and args[0].lower() != "channel":
+            print("  Использование: /edit  или  /edit channel")
+            return
+        self.enter_edit_mode()
+
     def prompt(self):
         who = self.me["username"] if self.me else "гость"
         try:
+            if self.edit_mode:
+                return "rt-edit[%s]> " % who
             return "rt[%s]> " % who
         except Exception:
             return "rt> "
